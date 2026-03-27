@@ -1,7 +1,7 @@
 """FlexClient — async client for IB's Flex Web Service API.
 
 Two-step flow:
-1. SendRequest with token + query_id -> ReferenceCode
+1. SendRequest with token + query_id -> SendRequestResult (ref code + download URL)
 2. Poll GetStatement with reference code -> XML statement
 
 Handles rate limiting (error 1018) and still-processing (error 1019)
@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 
 import aiohttp
 
@@ -21,12 +22,28 @@ from ibkr_flex_client.statement import FlexStatement
 
 logger = logging.getLogger(__name__)
 
-_BASE_URL = "https://gdcdyn.interactivebrokers.com/Universal/servlet/FlexStatementService"
+_SEND_URL = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService.SendRequest"
+_FALLBACK_GET_URL = "https://gdcdyn.interactivebrokers.com/AccountManagement/FlexWebService.GetStatement"
 
 # IB FlexQuery API status/error constants
 _STATUS_SUCCESS = "Success"
 _ERROR_RATE_LIMITED = "1018"
 _ERROR_STILL_PROCESSING = "1019"
+
+
+@dataclass(frozen=True, slots=True)
+class SendRequestResult:
+    """Result of a successful SendRequest call.
+
+    Attributes:
+        reference_code: The reference code to poll GetStatement with.
+        download_url: The URL to fetch the statement from, as returned
+            by IB in the ``<Url>`` response element. Falls back to the
+            default gdcdyn endpoint if not present.
+    """
+
+    reference_code: str
+    download_url: str
 
 
 class FlexClient:
@@ -43,11 +60,15 @@ class FlexClient:
         query_id: str,
         max_retries: int = 10,
         backoff_base: float = 10.0,
+        from_date: str | None = None,
+        to_date: str | None = None,
     ) -> None:
         self._token = token
         self._query_id = query_id
         self._max_retries = max_retries
         self._backoff_base = backoff_base
+        self._from_date = from_date
+        self._to_date = to_date
 
     async def fetch(self, session: aiohttp.ClientSession) -> FlexStatement:
         """Fetch and parse a FlexQuery statement.
@@ -57,21 +78,24 @@ class FlexClient:
 
         Raises FlexError on API errors or timeouts.
         """
-        ref_code = await self._send_request(session)
-        xml_text = await self._get_statement(session, ref_code)
+        result = await self._send_request(session)
+        xml_text = await self._get_statement(session, result)
         return FlexStatement(xml_text)
 
-    async def _send_request(self, session: aiohttp.ClientSession) -> str:
-        """Step 1: Send request, get reference code.
+    async def _send_request(self, session: aiohttp.ClientSession) -> SendRequestResult:
+        """Step 1: Send request, get reference code and download URL.
 
         Retries on 1018 (rate limit) with exponential backoff.
         """
-        url = f"{_BASE_URL}.SendRequest"
-        params = {"t": self._token, "q": self._query_id, "v": "3"}
+        params: dict[str, str] = {"t": self._token, "q": self._query_id, "v": "3"}
+        if self._from_date:
+            params["fd"] = self._from_date
+        if self._to_date:
+            params["td"] = self._to_date
 
         max_retries = 5  # SendRequest has its own tighter limit
         for attempt in range(max_retries):
-            async with session.get(url, params=params) as resp:
+            async with session.get(_SEND_URL, params=params) as resp:
                 text = await resp.text()
 
             root = ET.fromstring(text)
@@ -81,8 +105,12 @@ class FlexClient:
                 ref_code = root.findtext("ReferenceCode")
                 if not ref_code:
                     raise FlexError("SendRequest returned no ReferenceCode")
+                download_url = root.findtext("Url") or _FALLBACK_GET_URL
                 logger.info("SendRequest OK, reference_code=%s", ref_code)
-                return ref_code
+                return SendRequestResult(
+                    reference_code=ref_code,
+                    download_url=download_url,
+                )
 
             error_code = root.findtext("ErrorCode", "unknown")
             error_msg = root.findtext("ErrorMessage", "unknown error")
@@ -105,18 +133,19 @@ class FlexClient:
         )
 
     async def _get_statement(
-        self, session: aiohttp.ClientSession, ref_code: str,
+        self, session: aiohttp.ClientSession, request: SendRequestResult,
     ) -> str:
         """Step 2: Poll for statement with retry on 1018/1019.
+
+        Uses the download URL returned by SendRequest.
 
         1018 = rate limited (exponential backoff).
         1019 = still processing (fixed short backoff).
         """
-        url = f"{_BASE_URL}.GetStatement"
-        params = {"q": ref_code, "t": self._token, "v": "3"}
+        params = {"q": request.reference_code, "t": self._token, "v": "3"}
 
         for attempt in range(self._max_retries):
-            async with session.get(url, params=params) as resp:
+            async with session.get(request.download_url, params=params) as resp:
                 text = await resp.text()
 
             # Error envelope check — real statements don't start with this tag
