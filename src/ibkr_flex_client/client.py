@@ -22,8 +22,8 @@ from ibkr_flex_client.statement import FlexStatement
 
 logger = logging.getLogger(__name__)
 
-_SEND_URL = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService.SendRequest"
-_FALLBACK_GET_URL = "https://gdcdyn.interactivebrokers.com/AccountManagement/FlexWebService.GetStatement"
+_SEND_URL = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/SendRequest"
+_FALLBACK_GET_URL = "https://gdcdyn.interactivebrokers.com/AccountManagement/FlexWebService/GetStatement"
 
 # IB FlexQuery API status/error constants
 _STATUS_SUCCESS = "Success"
