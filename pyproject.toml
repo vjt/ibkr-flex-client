@@ -2,10 +2,27 @@
 name = "ibkr-flex-client"
 version = "0.1.0"
 description = "Minimal async client for Interactive Brokers FlexQuery Web Service"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Marcello Barnaba", email = "vjt@openssl.it" }]
 requires-python = ">=3.12"
+keywords = ["ibkr", "interactive-brokers", "flexquery", "async", "aiohttp"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Framework :: AsyncIO",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
 dependencies = [
     "aiohttp>=3.9",
 ]
+
+[project.urls]
+Homepage = "https://github.com/vjt/ibkr-flex-client"
+Repository = "https://github.com/vjt/ibkr-flex-client"
+Issues = "https://github.com/vjt/ibkr-flex-client/issues"
 
 [project.optional-dependencies]
 dev = [
